@@ -52,7 +52,7 @@ test_ds = merged_dataset_from_directories(
     batch_size=batch_size)
 
 # to improve performance, use buffered prefetching to load images
-AUTOTUNE = tf.data.experimental.AUTOTUNE
+AUTOTUNE = tf.data.AUTOTUNE
 train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
 val_ds = val_ds.prefetch(buffer_size=AUTOTUNE)
 test_ds = test_ds.prefetch(buffer_size=AUTOTUNE)

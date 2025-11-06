@@ -16,6 +16,15 @@ physical_devices = tf.config.list_physical_devices('GPU')
 if len(physical_devices):
     tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
+# Enable mixed precision training for 2-3x speedup on modern GPUs
+# This uses float16 for computation and float32 for variable storage
+use_mixed_precision = os.getenv("HANDWASH_MIXED_PRECISION", "true").lower() == "true"
+if use_mixed_precision and len(physical_devices):
+    from tensorflow.keras import mixed_precision
+    policy = mixed_precision.Policy('mixed_float16')
+    mixed_precision.set_global_policy(policy)
+    print("Mixed precision training enabled (float16 compute, float32 variables)")
+
 # Define parameters for the dataset loader.
 # Adjust batch size according to the memory volume of your GPU;
 batch_size = 32
@@ -39,8 +48,8 @@ num_extra_layers = int(os.getenv("HANDWASH_EXTRA_LAYERS", 0))
 
 # data augmentation
 data_augmentation = tf.keras.Sequential([
-    tf.keras.layers.experimental.preprocessing.RandomFlip('horizontal'),
-    tf.keras.layers.experimental.preprocessing.RandomRotation(0.2),
+    tf.keras.layers.RandomFlip('horizontal'),
+    tf.keras.layers.RandomRotation(0.2),
 ])
 
 def freeze_model(model):
@@ -96,13 +105,15 @@ def get_default_model():
     x = data_augmentation(x)
     x = get_preprocessing_function()(x)
     x = base_model(x, training=training)
-    x = tf.keras.layers.Flatten()(x)
     if num_extra_layers:
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    else:
+        x = tf.keras.layers.Flatten()(x)
     for i in range(num_extra_layers):
         x = tf.keras.layers.Dense(128, activation='relu')(x)
         x = tf.keras.layers.Dropout(0.2)(x)
-    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax')(x)
+    # Use float32 for output layer (required for mixed precision training)
+    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(x)
     model = tf.keras.Model(inputs, outputs)
     print(model.summary())
 
@@ -165,7 +176,8 @@ def get_time_distributed_model():
     for i in range(num_extra_layers):
         x = tf.keras.layers.Dense(128, activation='relu')(x)
         x = tf.keras.layers.Dropout(0.2)(x)
-    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax')(x)
+    # Use float32 for output layer (required for mixed precision training)
+    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(x)
     model = tf.keras.Model(inputs, outputs)
     print(model.summary())
 
@@ -224,12 +236,12 @@ def get_merged_model():
         layer._name = "of_" + layer.name
 
     merged = tf.keras.layers.concatenate([rgb_network.output, of_network.output], axis=1)
-    merged = tf.keras.layers.Flatten()(merged)
-    # XXX: should add a pooling layer here?!
+    # Output is already flat after concatenating two flattened tensors
     for i in range(num_extra_layers):
         merged = tf.keras.layers.Dense(128, activation='relu')(merged)
         merged = tf.keras.layers.Dropout(0.2)(merged)
-    merged = tf.keras.layers.Dense(N_CLASSES, activation='softmax')(merged)
+    # Use float32 for output layer (required for mixed precision training)
+    merged = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(merged)
 
     model = tf.keras.Model([rgb_network.input, of_network.input], merged)
     print(model.summary())
