@@ -45,8 +45,17 @@ training:
   # Model parameters (can be overridden by env vars)
   model_name: "MobileNetV2"  # MobileNetV2, InceptionV3, Xception
   num_trainable_layers: 0
-  num_frames: 5  # For video models
+  num_frames: 5  # For video models (TimeDistributed)
   num_extra_layers: 0
+
+  # 3D CNN specific parameters
+  img_size_3dcnn: [112, 112]  # Smaller size for 3D CNN (memory intensive)
+  batch_size_3dcnn: 8  # Smaller batch for 3D CNN
+  frame_step_3dcnn: 2  # Frame step for 3D CNN
+
+  # TSN specific parameters
+  num_segments: 3  # Number of segments for TSN
+  frames_per_video: 30  # Approximate frames per video for TSN sampling
 
   # Early stopping
   early_stopping_patience: 10

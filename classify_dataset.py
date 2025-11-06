@@ -249,6 +249,123 @@ def get_merged_model():
     return model
 
 
+def get_3dcnn_model():
+    """
+    3D CNN model for video classification
+    Uses 3D convolutions to learn spatiotemporal features directly
+    More efficient than TimeDistributed + GRU for shorter clips
+    """
+    INPUT_SHAPE = (num_frames,) + IMG_SHAPE
+
+    inputs = tf.keras.Input(shape=INPUT_SHAPE)
+    x = inputs
+
+    # 3D Convolutional blocks
+    x = tf.keras.layers.Conv3D(64, (3, 3, 3), activation='relu', padding='same')(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.MaxPooling3D((2, 2, 2))(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
+
+    x = tf.keras.layers.Conv3D(128, (3, 3, 3), activation='relu', padding='same')(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.MaxPooling3D((2, 2, 2))(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    x = tf.keras.layers.Conv3D(256, (3, 3, 3), activation='relu', padding='same')(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.MaxPooling3D((2, 2, 2))(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    x = tf.keras.layers.Conv3D(512, (3, 3, 3), activation='relu', padding='same')(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.GlobalAveragePooling3D()(x)
+
+    # Dense layers
+    x = tf.keras.layers.Dense(512, activation='relu')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+
+    for i in range(num_extra_layers):
+        x = tf.keras.layers.Dense(128, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.2)(x)
+
+    # Use float32 for output layer (required for mixed precision training)
+    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(x)
+
+    model = tf.keras.Model(inputs, outputs)
+    print(model.summary())
+
+    return model
+
+
+def get_tsn_model(num_segments=3):
+    """
+    Temporal Segment Network (TSN) model
+    Divides video into segments and samples 1 frame per segment
+    Efficient for long videos, captures temporal evolution
+
+    Args:
+        num_segments: Number of segments to divide video into (default: 3)
+    """
+    if model_name == "MobileNetV2":
+        base_model = tf.keras.applications.MobileNetV2(input_shape=IMG_SHAPE,
+                                                       include_top=False,
+                                                       pooling='avg',
+                                                       weights='imagenet')
+    elif model_name == "InceptionV3":
+        base_model = tf.keras.applications.InceptionV3(input_shape=IMG_SHAPE,
+                                                       include_top=False,
+                                                       pooling='avg',
+                                                       weights='imagenet')
+    elif model_name == "Xception":
+        base_model = tf.keras.applications.Xception(input_shape=IMG_SHAPE,
+                                                    include_top=False,
+                                                    pooling='avg',
+                                                    weights='imagenet')
+    else:
+        print("Unknown model name", model_name)
+        exit(-1)
+
+    training = freeze_model(base_model)
+
+    # Build the base model for single frame
+    single_frame_inputs = tf.keras.Input(IMG_SHAPE)
+    x = single_frame_inputs
+    x = data_augmentation(x)
+    x = get_preprocessing_function()(x)
+    single_frame_outputs = base_model(x, training=training)
+    single_frame_model = tf.keras.Model(single_frame_inputs, single_frame_outputs)
+
+    # Create separate inputs for each segment
+    segment_inputs = []
+    segment_features = []
+
+    for i in range(num_segments):
+        segment_input = tf.keras.Input(shape=IMG_SHAPE, name=f'segment_{i}')
+        segment_inputs.append(segment_input)
+        feature = single_frame_model(segment_input)
+        segment_features.append(feature)
+
+    # Consensus function: Average pooling across segments
+    if num_segments > 1:
+        merged = tf.keras.layers.Average()(segment_features)
+    else:
+        merged = segment_features[0]
+
+    # Classification head
+    x = merged
+    for i in range(num_extra_layers):
+        x = tf.keras.layers.Dense(128, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.2)(x)
+
+    # Use float32 for output layer (required for mixed precision training)
+    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(x)
+
+    model = tf.keras.Model(segment_inputs, outputs)
+    print(model.summary())
+
+    return model
+
+
 def fit_model(name, model, train_ds, val_ds, test_ds, weights_dict):
     # callbacks to implement early stopping and saving the model
     es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=10)

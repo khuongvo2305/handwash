@@ -35,6 +35,10 @@ python train.py --dataset metc --model merged
 - `frames` - Single-frame CNN (MobileNetV2/InceptionV3/Xception)
 - `videos` - TimeDistributed CNN + GRU for video sequences
 - `merged` - Two-stream network (RGB + Optical Flow)
+- `3dcnn` - 3D CNN for spatiotemporal learning (NEW!)
+- `tsn` - Temporal Segment Network - efficient sparse sampling (NEW!)
+
+**📖 See [NEW_MODELS.md](NEW_MODELS.md) for detailed guide on 3D CNN and TSN models**
 
 ## Configuration
 

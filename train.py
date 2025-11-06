@@ -25,7 +25,9 @@ from classify_dataset import (
     evaluate,
     get_default_model,
     get_time_distributed_model,
-    get_merged_model
+    get_merged_model,
+    get_3dcnn_model,
+    get_tsn_model
 )
 from unified_dataset_loader import load_dataset
 
@@ -51,7 +53,7 @@ def apply_config_to_env(config):
     os.environ['HANDWASH_EXTRA_LAYERS'] = str(training_config.get('num_extra_layers', 0))
 
 
-def get_model_builder(model_type):
+def get_model_builder(model_type, num_segments=3):
     """Get the appropriate model builder function"""
     if model_type == 'frames':
         return get_default_model
@@ -59,6 +61,10 @@ def get_model_builder(model_type):
         return get_time_distributed_model
     elif model_type == 'merged':
         return get_merged_model
+    elif model_type == '3dcnn':
+        return get_3dcnn_model
+    elif model_type == 'tsn':
+        return lambda: get_tsn_model(num_segments)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -99,8 +105,8 @@ Examples:
         '--model',
         type=str,
         required=True,
-        choices=['frames', 'videos', 'merged'],
-        help='Model type: frames (single-frame CNN), videos (TimeDistributed+GRU), merged (two-stream RGB+OF)'
+        choices=['frames', 'videos', 'merged', '3dcnn', 'tsn'],
+        help='Model type: frames (single-frame CNN), videos (TimeDistributed+GRU), merged (two-stream RGB+OF), 3dcnn (3D CNN), tsn (Temporal Segment Network)'
     )
 
     parser.add_argument(
@@ -153,8 +159,11 @@ Examples:
     print(f"Batch Size: {config['training']['batch_size']}")
     print(f"Image Size: {config['training']['img_height']}x{config['training']['img_width']}")
 
-    if args.model == 'videos':
-        print(f"Num Frames: {config['training']['num_frames']}")
+    if args.model in ['videos', '3dcnn']:
+        print(f"Num Frames: {config['training'].get('num_frames', 5)}")
+
+    if args.model == 'tsn':
+        print(f"Num Segments: {config['training'].get('num_segments', 3)}")
 
     print("="*60 + "\n")
 
@@ -169,7 +178,8 @@ Examples:
 
     # Build model
     print(f"\nBuilding {args.model} model...")
-    model_builder = get_model_builder(args.model)
+    num_segments = config['training'].get('num_segments', 3)
+    model_builder = get_model_builder(args.model, num_segments)
     model = model_builder()
     print("Model built successfully!")
 
