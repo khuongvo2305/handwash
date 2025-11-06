@@ -20,7 +20,7 @@ N_CLASSES = 7
 classes = [str(i) for i in range(N_CLASSES)]
 
 # the METC dataset has ~16 frames per second, the others have 30
-FPS = 16 if "METC" in input_dir else 30
+FPS = 16 if "METC" in dataset_dir else 30
 
 # what step to use for movements?
 frame_step = FPS // 3
@@ -76,7 +76,7 @@ def frame_sequence_to_flow(f1, f2):
     return rgb
 
 
-def extract_flow(c, filename):
+def extract_flow(c, filename, input_dir, output_dir):
     in_fullname = os.path.join(input_dir, c, filename)
     out_fullname = os.path.join(output_dir, c, "frame_{}_" + os.path.splitext(filename)[0] + ".jpg")
 
@@ -108,7 +108,7 @@ def main():
         for c in classes:
             for filename in os.listdir(os.path.join(input_dir, c)):
                 if filename[-4:] == ".mp4":
-                    extract_flow(c, filename)
+                    extract_flow(c, filename, input_dir, output_dir)
 
 
 if __name__ == "__main__":

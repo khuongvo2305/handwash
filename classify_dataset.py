@@ -16,6 +16,15 @@ physical_devices = tf.config.list_physical_devices('GPU')
 if len(physical_devices):
     tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
+# Enable mixed precision training for 2-3x speedup on modern GPUs
+# This uses float16 for computation and float32 for variable storage
+use_mixed_precision = os.getenv("HANDWASH_MIXED_PRECISION", "true").lower() == "true"
+if use_mixed_precision and len(physical_devices):
+    from tensorflow.keras import mixed_precision
+    policy = mixed_precision.Policy('mixed_float16')
+    mixed_precision.set_global_policy(policy)
+    print("Mixed precision training enabled (float16 compute, float32 variables)")
+
 # Define parameters for the dataset loader.
 # Adjust batch size according to the memory volume of your GPU;
 batch_size = 32
@@ -39,8 +48,8 @@ num_extra_layers = int(os.getenv("HANDWASH_EXTRA_LAYERS", 0))
 
 # data augmentation
 data_augmentation = tf.keras.Sequential([
-    tf.keras.layers.experimental.preprocessing.RandomFlip('horizontal'),
-    tf.keras.layers.experimental.preprocessing.RandomRotation(0.2),
+    tf.keras.layers.RandomFlip('horizontal'),
+    tf.keras.layers.RandomRotation(0.2),
 ])
 
 def freeze_model(model):
@@ -96,13 +105,15 @@ def get_default_model():
     x = data_augmentation(x)
     x = get_preprocessing_function()(x)
     x = base_model(x, training=training)
-    x = tf.keras.layers.Flatten()(x)
     if num_extra_layers:
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    else:
+        x = tf.keras.layers.Flatten()(x)
     for i in range(num_extra_layers):
         x = tf.keras.layers.Dense(128, activation='relu')(x)
         x = tf.keras.layers.Dropout(0.2)(x)
-    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax')(x)
+    # Use float32 for output layer (required for mixed precision training)
+    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(x)
     model = tf.keras.Model(inputs, outputs)
     print(model.summary())
 
@@ -165,7 +176,8 @@ def get_time_distributed_model():
     for i in range(num_extra_layers):
         x = tf.keras.layers.Dense(128, activation='relu')(x)
         x = tf.keras.layers.Dropout(0.2)(x)
-    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax')(x)
+    # Use float32 for output layer (required for mixed precision training)
+    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(x)
     model = tf.keras.Model(inputs, outputs)
     print(model.summary())
 
@@ -224,14 +236,274 @@ def get_merged_model():
         layer._name = "of_" + layer.name
 
     merged = tf.keras.layers.concatenate([rgb_network.output, of_network.output], axis=1)
-    merged = tf.keras.layers.Flatten()(merged)
-    # XXX: should add a pooling layer here?!
+    # Output is already flat after concatenating two flattened tensors
     for i in range(num_extra_layers):
         merged = tf.keras.layers.Dense(128, activation='relu')(merged)
         merged = tf.keras.layers.Dropout(0.2)(merged)
-    merged = tf.keras.layers.Dense(N_CLASSES, activation='softmax')(merged)
+    # Use float32 for output layer (required for mixed precision training)
+    merged = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(merged)
 
     model = tf.keras.Model([rgb_network.input, of_network.input], merged)
+    print(model.summary())
+
+    return model
+
+
+def get_3dcnn_model():
+    """
+    3D CNN model for video classification
+    Uses 3D convolutions to learn spatiotemporal features directly
+    More efficient than TimeDistributed + GRU for shorter clips
+    """
+    INPUT_SHAPE = (num_frames,) + IMG_SHAPE
+
+    inputs = tf.keras.Input(shape=INPUT_SHAPE)
+    x = inputs
+
+    # 3D Convolutional blocks
+    x = tf.keras.layers.Conv3D(64, (3, 3, 3), activation='relu', padding='same')(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.MaxPooling3D((2, 2, 2))(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
+
+    x = tf.keras.layers.Conv3D(128, (3, 3, 3), activation='relu', padding='same')(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.MaxPooling3D((2, 2, 2))(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    x = tf.keras.layers.Conv3D(256, (3, 3, 3), activation='relu', padding='same')(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.MaxPooling3D((2, 2, 2))(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    x = tf.keras.layers.Conv3D(512, (3, 3, 3), activation='relu', padding='same')(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.GlobalAveragePooling3D()(x)
+
+    # Dense layers
+    x = tf.keras.layers.Dense(512, activation='relu')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+
+    for i in range(num_extra_layers):
+        x = tf.keras.layers.Dense(128, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.2)(x)
+
+    # Use float32 for output layer (required for mixed precision training)
+    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(x)
+
+    model = tf.keras.Model(inputs, outputs)
+    print(model.summary())
+
+    return model
+
+
+def get_tsn_model(num_segments=3):
+    """
+    Temporal Segment Network (TSN) model
+    Divides video into segments and samples 1 frame per segment
+    Efficient for long videos, captures temporal evolution
+
+    Args:
+        num_segments: Number of segments to divide video into (default: 3)
+    """
+    if model_name == "MobileNetV2":
+        base_model = tf.keras.applications.MobileNetV2(input_shape=IMG_SHAPE,
+                                                       include_top=False,
+                                                       pooling='avg',
+                                                       weights='imagenet')
+    elif model_name == "InceptionV3":
+        base_model = tf.keras.applications.InceptionV3(input_shape=IMG_SHAPE,
+                                                       include_top=False,
+                                                       pooling='avg',
+                                                       weights='imagenet')
+    elif model_name == "Xception":
+        base_model = tf.keras.applications.Xception(input_shape=IMG_SHAPE,
+                                                    include_top=False,
+                                                    pooling='avg',
+                                                    weights='imagenet')
+    else:
+        print("Unknown model name", model_name)
+        exit(-1)
+
+    training = freeze_model(base_model)
+
+    # Build the base model for single frame
+    single_frame_inputs = tf.keras.Input(IMG_SHAPE)
+    x = single_frame_inputs
+    x = data_augmentation(x)
+    x = get_preprocessing_function()(x)
+    single_frame_outputs = base_model(x, training=training)
+    single_frame_model = tf.keras.Model(single_frame_inputs, single_frame_outputs)
+
+    # Create separate inputs for each segment
+    segment_inputs = []
+    segment_features = []
+
+    for i in range(num_segments):
+        segment_input = tf.keras.Input(shape=IMG_SHAPE, name=f'segment_{i}')
+        segment_inputs.append(segment_input)
+        feature = single_frame_model(segment_input)
+        segment_features.append(feature)
+
+    # Consensus function: Average pooling across segments
+    if num_segments > 1:
+        merged = tf.keras.layers.Average()(segment_features)
+    else:
+        merged = segment_features[0]
+
+    # Classification head
+    x = merged
+    for i in range(num_extra_layers):
+        x = tf.keras.layers.Dense(128, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.2)(x)
+
+    # Use float32 for output layer (required for mixed precision training)
+    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(x)
+
+    model = tf.keras.Model(segment_inputs, outputs)
+    print(model.summary())
+
+    return model
+
+
+def get_i3d_model():
+    """
+    Inflated 3D (I3D) model
+    Based on "Quo Vadis, Action Recognition?" (Carreira & Zisserman, 2017)
+
+    I3D inflates 2D filters into 3D by repeating weights across time dimension
+    More sophisticated than basic 3D CNN, better for action recognition
+    """
+    INPUT_SHAPE = (num_frames,) + IMG_SHAPE
+
+    inputs = tf.keras.Input(shape=INPUT_SHAPE)
+    x = inputs
+
+    # Inception-style mixed convolutions
+    # Block 1
+    x = tf.keras.layers.Conv3D(64, (7, 7, 7), strides=(2, 2, 2), padding='same', activation='relu')(x)
+    x = tf.keras.layers.MaxPooling3D((1, 3, 3), strides=(1, 2, 2), padding='same')(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+
+    # Block 2
+    x = tf.keras.layers.Conv3D(64, (1, 1, 1), padding='same', activation='relu')(x)
+    x = tf.keras.layers.Conv3D(192, (3, 3, 3), padding='same', activation='relu')(x)
+    x = tf.keras.layers.MaxPooling3D((1, 3, 3), strides=(1, 2, 2), padding='same')(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+
+    # Simplified Inception modules (reduced for memory)
+    # Block 3a
+    branch1 = tf.keras.layers.Conv3D(64, (1, 1, 1), padding='same', activation='relu')(x)
+
+    branch2 = tf.keras.layers.Conv3D(96, (1, 1, 1), padding='same', activation='relu')(x)
+    branch2 = tf.keras.layers.Conv3D(128, (3, 3, 3), padding='same', activation='relu')(branch2)
+
+    branch3 = tf.keras.layers.Conv3D(16, (1, 1, 1), padding='same', activation='relu')(x)
+    branch3 = tf.keras.layers.Conv3D(32, (3, 3, 3), padding='same', activation='relu')(branch3)
+
+    branch4 = tf.keras.layers.MaxPooling3D((3, 3, 3), strides=(1, 1, 1), padding='same')(x)
+    branch4 = tf.keras.layers.Conv3D(32, (1, 1, 1), padding='same', activation='relu')(branch4)
+
+    x = tf.keras.layers.concatenate([branch1, branch2, branch3, branch4], axis=-1)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    # Global pooling
+    x = tf.keras.layers.GlobalAveragePooling3D()(x)
+    x = tf.keras.layers.Dense(512, activation='relu')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+
+    for i in range(num_extra_layers):
+        x = tf.keras.layers.Dense(128, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.2)(x)
+
+    # Use float32 for output layer (required for mixed precision training)
+    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(x)
+
+    model = tf.keras.Model(inputs, outputs)
+    print(model.summary())
+
+    return model
+
+
+def get_slowfast_model(alpha=4, beta=8):
+    """
+    SlowFast Networks for Video Recognition
+    Based on "SlowFast Networks for Video Recognition" (Feichtenhofer et al., 2019)
+
+    Dual-pathway architecture:
+    - Slow pathway: High spatial resolution, low temporal resolution
+    - Fast pathway: Low spatial resolution, high temporal resolution
+
+    Args:
+        alpha: Temporal stride ratio (Fast processes alpha times more frames)
+        beta: Channel ratio (Slow has beta times more channels)
+    """
+    # Slow pathway: fewer frames, full spatial resolution
+    slow_frames = num_frames // alpha
+    slow_input_shape = (slow_frames,) + IMG_SHAPE
+
+    # Fast pathway: more frames, reduced spatial resolution
+    fast_frames = num_frames
+    fast_img_size = (IMG_SIZE[0] // 2, IMG_SIZE[1] // 2)  # Half resolution
+    fast_input_shape = (fast_frames, fast_img_size[0], fast_img_size[1], N_CHANNELS)
+
+    # Slow Pathway
+    slow_input = tf.keras.Input(shape=slow_input_shape, name='slow_input')
+    slow = tf.keras.layers.Conv3D(64, (1, 7, 7), strides=(1, 2, 2), padding='same', activation='relu')(slow_input)
+    slow = tf.keras.layers.BatchNormalization()(slow)
+    slow = tf.keras.layers.MaxPooling3D((1, 3, 3), strides=(1, 2, 2), padding='same')(slow)
+
+    slow = tf.keras.layers.Conv3D(128, (3, 3, 3), padding='same', activation='relu')(slow)
+    slow = tf.keras.layers.BatchNormalization()(slow)
+    slow = tf.keras.layers.Dropout(0.3)(slow)
+
+    slow = tf.keras.layers.Conv3D(256, (3, 3, 3), padding='same', activation='relu')(slow)
+    slow = tf.keras.layers.BatchNormalization()(slow)
+    slow = tf.keras.layers.Dropout(0.3)(slow)
+
+    # Fast Pathway (fewer channels, more temporal resolution)
+    fast_input = tf.keras.Input(shape=fast_input_shape, name='fast_input')
+    fast_channels = 64 // beta  # Fewer channels
+
+    fast = tf.keras.layers.Conv3D(fast_channels, (5, 7, 7), strides=(1, 2, 2), padding='same', activation='relu')(fast_input)
+    fast = tf.keras.layers.BatchNormalization()(fast)
+    fast = tf.keras.layers.MaxPooling3D((1, 3, 3), strides=(1, 2, 2), padding='same')(fast)
+
+    fast = tf.keras.layers.Conv3D(fast_channels * 2, (3, 3, 3), padding='same', activation='relu')(fast)
+    fast = tf.keras.layers.BatchNormalization()(fast)
+    fast = tf.keras.layers.Dropout(0.3)(fast)
+
+    fast = tf.keras.layers.Conv3D(fast_channels * 4, (3, 3, 3), padding='same', activation='relu')(fast)
+    fast = tf.keras.layers.BatchNormalization()(fast)
+    fast = tf.keras.layers.Dropout(0.3)(fast)
+
+    # Lateral connections: Fast → Slow
+    # Reduce temporal dimension of fast to match slow
+    fast_to_slow = tf.keras.layers.MaxPooling3D((alpha, 1, 1), strides=(alpha, 1, 1))(fast)
+    # Match spatial dimensions
+    fast_to_slow = tf.keras.layers.UpSampling3D(size=(1, 2, 2))(fast_to_slow)
+    # Match channels
+    fast_to_slow = tf.keras.layers.Conv3D(256, (1, 1, 1), padding='same')(fast_to_slow)
+
+    # Fuse pathways
+    fused = tf.keras.layers.concatenate([slow, fast_to_slow], axis=-1)
+    fused = tf.keras.layers.Conv3D(512, (3, 3, 3), padding='same', activation='relu')(fused)
+    fused = tf.keras.layers.BatchNormalization()(fused)
+    fused = tf.keras.layers.GlobalAveragePooling3D()(fused)
+
+    # Classification head
+    x = tf.keras.layers.Dense(512, activation='relu')(fused)
+    x = tf.keras.layers.Dropout(0.5)(x)
+
+    for i in range(num_extra_layers):
+        x = tf.keras.layers.Dense(128, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.2)(x)
+
+    # Use float32 for output layer (required for mixed precision training)
+    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(x)
+
+    model = tf.keras.Model([slow_input, fast_input], outputs)
     print(model.summary())
 
     return model

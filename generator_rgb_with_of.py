@@ -253,11 +253,12 @@ def paths_and_labels_to_dataset(image_paths,
                                 interpolation,
                                 crop_to_aspect_ratio=False):
   """Constructs a dataset of images and labels."""
-  # TODO(fchollet): consider making num_parallel_calls settable
+  import tensorflow as tf
   path_ds = dataset_ops.Dataset.from_tensor_slices(image_paths)
   args = (image_size, num_channels, interpolation, crop_to_aspect_ratio)
   img_ds = path_ds.map(
-      lambda x: load_image(x, *args))
+      lambda x: load_image(x, *args),
+      num_parallel_calls=tf.data.AUTOTUNE)  # Parallel image loading for performance
   return img_ds
 
 def load_image(path, image_size, num_channels, interpolation,

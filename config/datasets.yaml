@@ -1,0 +1,75 @@
+# Dataset and Training Configuration
+# This file unifies all dataset and training parameters
+
+datasets:
+  kaggle:
+    name: "Kaggle Hand Wash Dataset"
+    fps: 30
+    paths:
+      frames_train: "dataset-kaggle/kaggle-dataset-6classes-preprocessed/frames/trainval"
+      frames_test: "dataset-kaggle/kaggle-dataset-6classes-preprocessed/frames/test"
+      of_train: "dataset-kaggle/kaggle-dataset-6classes-preprocessed/of/trainval"
+      of_test: "dataset-kaggle/kaggle-dataset-6classes-preprocessed/of/test"
+
+  pskus:
+    name: "PSKUS Hospital Dataset"
+    fps: 30
+    paths:
+      frames_train: "dataset-pskus/PSKUS_dataset_preprocessed/frames/trainval"
+      frames_test: "dataset-pskus/PSKUS_dataset_preprocessed/frames/test"
+      of_train: "dataset-pskus/PSKUS_dataset_preprocessed/of/trainval"
+      of_test: "dataset-pskus/PSKUS_dataset_preprocessed/of/test"
+
+  metc:
+    name: "RSU METC Lab Dataset"
+    fps: 16
+    paths:
+      frames_train: "dataset-metc/RSU_METC_dataset_preprocessed/frames/trainval"
+      frames_test: "dataset-metc/RSU_METC_dataset_preprocessed/frames/test"
+      of_train: "dataset-metc/RSU_METC_dataset_preprocessed/of/trainval"
+      of_test: "dataset-metc/RSU_METC_dataset_preprocessed/of/test"
+
+training:
+  # Image dimensions
+  img_height: 240
+  img_width: 320
+  n_channels: 3
+
+  # Training parameters
+  batch_size: 32
+  n_classes: 7
+  num_epochs: 20
+  validation_split: 0.2
+  seed: 123
+
+  # Model parameters (can be overridden by env vars)
+  model_name: "MobileNetV2"  # MobileNetV2, InceptionV3, Xception
+  num_trainable_layers: 0
+  num_frames: 5  # For video models (TimeDistributed)
+  num_extra_layers: 0
+
+  # 3D CNN specific parameters
+  img_size_3dcnn: [112, 112]  # Smaller size for 3D CNN (memory intensive)
+  batch_size_3dcnn: 8  # Smaller batch for 3D CNN
+  frame_step_3dcnn: 2  # Frame step for 3D CNN
+
+  # TSN specific parameters
+  num_segments: 3  # Number of segments for TSN
+  frames_per_video: 30  # Approximate frames per video for TSN sampling
+
+  # SlowFast specific parameters
+  slowfast_alpha: 4  # Temporal stride ratio (Fast has alpha times more frames)
+  slowfast_beta: 8  # Channel ratio (Slow has beta times more channels)
+
+  # Early stopping
+  early_stopping_patience: 10
+
+  # Data augmentation
+  augmentation:
+    horizontal_flip: true
+    rotation_factor: 0.2
+
+  # Performance optimization
+  use_mixed_precision: true
+  cache_dataset: true
+  prefetch_buffer_multiplier: 8

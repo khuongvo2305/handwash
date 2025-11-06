@@ -47,7 +47,7 @@ def get_datasets(data_dir, test_data_dir, batch_size=None):
     weights_dict = get_weights_dict(data_dir, train_ds.class_names)
 
     # to improve performance, use buffered prefetching to load images
-    AUTOTUNE = tf.data.experimental.AUTOTUNE
+    AUTOTUNE = tf.data.AUTOTUNE
 
     train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
     val_ds = val_ds.prefetch(buffer_size=AUTOTUNE)
