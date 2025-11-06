@@ -27,7 +27,9 @@ from classify_dataset import (
     get_time_distributed_model,
     get_merged_model,
     get_3dcnn_model,
-    get_tsn_model
+    get_tsn_model,
+    get_i3d_model,
+    get_slowfast_model
 )
 from unified_dataset_loader import load_dataset
 
@@ -65,6 +67,10 @@ def get_model_builder(model_type, num_segments=3):
         return get_3dcnn_model
     elif model_type == 'tsn':
         return lambda: get_tsn_model(num_segments)
+    elif model_type == 'i3d':
+        return get_i3d_model
+    elif model_type == 'slowfast':
+        return get_slowfast_model
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -105,8 +111,8 @@ Examples:
         '--model',
         type=str,
         required=True,
-        choices=['frames', 'videos', 'merged', '3dcnn', 'tsn'],
-        help='Model type: frames (single-frame CNN), videos (TimeDistributed+GRU), merged (two-stream RGB+OF), 3dcnn (3D CNN), tsn (Temporal Segment Network)'
+        choices=['frames', 'videos', 'merged', '3dcnn', 'tsn', 'i3d', 'slowfast'],
+        help='Model type: frames, videos, merged, 3dcnn, tsn, i3d (Inflated 3D), slowfast (SlowFast Networks)'
     )
 
     parser.add_argument(
@@ -159,11 +165,15 @@ Examples:
     print(f"Batch Size: {config['training']['batch_size']}")
     print(f"Image Size: {config['training']['img_height']}x{config['training']['img_width']}")
 
-    if args.model in ['videos', '3dcnn']:
+    if args.model in ['videos', '3dcnn', 'i3d', 'slowfast']:
         print(f"Num Frames: {config['training'].get('num_frames', 5)}")
 
     if args.model == 'tsn':
         print(f"Num Segments: {config['training'].get('num_segments', 3)}")
+
+    if args.model == 'slowfast':
+        print(f"Alpha (temporal ratio): {config['training'].get('slowfast_alpha', 4)}")
+        print(f"Beta (channel ratio): {config['training'].get('slowfast_beta', 8)}")
 
     print("="*60 + "\n")
 

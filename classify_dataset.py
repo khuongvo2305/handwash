@@ -366,6 +366,149 @@ def get_tsn_model(num_segments=3):
     return model
 
 
+def get_i3d_model():
+    """
+    Inflated 3D (I3D) model
+    Based on "Quo Vadis, Action Recognition?" (Carreira & Zisserman, 2017)
+
+    I3D inflates 2D filters into 3D by repeating weights across time dimension
+    More sophisticated than basic 3D CNN, better for action recognition
+    """
+    INPUT_SHAPE = (num_frames,) + IMG_SHAPE
+
+    inputs = tf.keras.Input(shape=INPUT_SHAPE)
+    x = inputs
+
+    # Inception-style mixed convolutions
+    # Block 1
+    x = tf.keras.layers.Conv3D(64, (7, 7, 7), strides=(2, 2, 2), padding='same', activation='relu')(x)
+    x = tf.keras.layers.MaxPooling3D((1, 3, 3), strides=(1, 2, 2), padding='same')(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+
+    # Block 2
+    x = tf.keras.layers.Conv3D(64, (1, 1, 1), padding='same', activation='relu')(x)
+    x = tf.keras.layers.Conv3D(192, (3, 3, 3), padding='same', activation='relu')(x)
+    x = tf.keras.layers.MaxPooling3D((1, 3, 3), strides=(1, 2, 2), padding='same')(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+
+    # Simplified Inception modules (reduced for memory)
+    # Block 3a
+    branch1 = tf.keras.layers.Conv3D(64, (1, 1, 1), padding='same', activation='relu')(x)
+
+    branch2 = tf.keras.layers.Conv3D(96, (1, 1, 1), padding='same', activation='relu')(x)
+    branch2 = tf.keras.layers.Conv3D(128, (3, 3, 3), padding='same', activation='relu')(branch2)
+
+    branch3 = tf.keras.layers.Conv3D(16, (1, 1, 1), padding='same', activation='relu')(x)
+    branch3 = tf.keras.layers.Conv3D(32, (3, 3, 3), padding='same', activation='relu')(branch3)
+
+    branch4 = tf.keras.layers.MaxPooling3D((3, 3, 3), strides=(1, 1, 1), padding='same')(x)
+    branch4 = tf.keras.layers.Conv3D(32, (1, 1, 1), padding='same', activation='relu')(branch4)
+
+    x = tf.keras.layers.concatenate([branch1, branch2, branch3, branch4], axis=-1)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    # Global pooling
+    x = tf.keras.layers.GlobalAveragePooling3D()(x)
+    x = tf.keras.layers.Dense(512, activation='relu')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+
+    for i in range(num_extra_layers):
+        x = tf.keras.layers.Dense(128, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.2)(x)
+
+    # Use float32 for output layer (required for mixed precision training)
+    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(x)
+
+    model = tf.keras.Model(inputs, outputs)
+    print(model.summary())
+
+    return model
+
+
+def get_slowfast_model(alpha=4, beta=8):
+    """
+    SlowFast Networks for Video Recognition
+    Based on "SlowFast Networks for Video Recognition" (Feichtenhofer et al., 2019)
+
+    Dual-pathway architecture:
+    - Slow pathway: High spatial resolution, low temporal resolution
+    - Fast pathway: Low spatial resolution, high temporal resolution
+
+    Args:
+        alpha: Temporal stride ratio (Fast processes alpha times more frames)
+        beta: Channel ratio (Slow has beta times more channels)
+    """
+    # Slow pathway: fewer frames, full spatial resolution
+    slow_frames = num_frames // alpha
+    slow_input_shape = (slow_frames,) + IMG_SHAPE
+
+    # Fast pathway: more frames, reduced spatial resolution
+    fast_frames = num_frames
+    fast_img_size = (IMG_SIZE[0] // 2, IMG_SIZE[1] // 2)  # Half resolution
+    fast_input_shape = (fast_frames, fast_img_size[0], fast_img_size[1], N_CHANNELS)
+
+    # Slow Pathway
+    slow_input = tf.keras.Input(shape=slow_input_shape, name='slow_input')
+    slow = tf.keras.layers.Conv3D(64, (1, 7, 7), strides=(1, 2, 2), padding='same', activation='relu')(slow_input)
+    slow = tf.keras.layers.BatchNormalization()(slow)
+    slow = tf.keras.layers.MaxPooling3D((1, 3, 3), strides=(1, 2, 2), padding='same')(slow)
+
+    slow = tf.keras.layers.Conv3D(128, (3, 3, 3), padding='same', activation='relu')(slow)
+    slow = tf.keras.layers.BatchNormalization()(slow)
+    slow = tf.keras.layers.Dropout(0.3)(slow)
+
+    slow = tf.keras.layers.Conv3D(256, (3, 3, 3), padding='same', activation='relu')(slow)
+    slow = tf.keras.layers.BatchNormalization()(slow)
+    slow = tf.keras.layers.Dropout(0.3)(slow)
+
+    # Fast Pathway (fewer channels, more temporal resolution)
+    fast_input = tf.keras.Input(shape=fast_input_shape, name='fast_input')
+    fast_channels = 64 // beta  # Fewer channels
+
+    fast = tf.keras.layers.Conv3D(fast_channels, (5, 7, 7), strides=(1, 2, 2), padding='same', activation='relu')(fast_input)
+    fast = tf.keras.layers.BatchNormalization()(fast)
+    fast = tf.keras.layers.MaxPooling3D((1, 3, 3), strides=(1, 2, 2), padding='same')(fast)
+
+    fast = tf.keras.layers.Conv3D(fast_channels * 2, (3, 3, 3), padding='same', activation='relu')(fast)
+    fast = tf.keras.layers.BatchNormalization()(fast)
+    fast = tf.keras.layers.Dropout(0.3)(fast)
+
+    fast = tf.keras.layers.Conv3D(fast_channels * 4, (3, 3, 3), padding='same', activation='relu')(fast)
+    fast = tf.keras.layers.BatchNormalization()(fast)
+    fast = tf.keras.layers.Dropout(0.3)(fast)
+
+    # Lateral connections: Fast → Slow
+    # Reduce temporal dimension of fast to match slow
+    fast_to_slow = tf.keras.layers.MaxPooling3D((alpha, 1, 1), strides=(alpha, 1, 1))(fast)
+    # Match spatial dimensions
+    fast_to_slow = tf.keras.layers.UpSampling3D(size=(1, 2, 2))(fast_to_slow)
+    # Match channels
+    fast_to_slow = tf.keras.layers.Conv3D(256, (1, 1, 1), padding='same')(fast_to_slow)
+
+    # Fuse pathways
+    fused = tf.keras.layers.concatenate([slow, fast_to_slow], axis=-1)
+    fused = tf.keras.layers.Conv3D(512, (3, 3, 3), padding='same', activation='relu')(fused)
+    fused = tf.keras.layers.BatchNormalization()(fused)
+    fused = tf.keras.layers.GlobalAveragePooling3D()(fused)
+
+    # Classification head
+    x = tf.keras.layers.Dense(512, activation='relu')(fused)
+    x = tf.keras.layers.Dropout(0.5)(x)
+
+    for i in range(num_extra_layers):
+        x = tf.keras.layers.Dense(128, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.2)(x)
+
+    # Use float32 for output layer (required for mixed precision training)
+    outputs = tf.keras.layers.Dense(N_CLASSES, activation='softmax', dtype='float32')(x)
+
+    model = tf.keras.Model([slow_input, fast_input], outputs)
+    print(model.summary())
+
+    return model
+
+
 def fit_model(name, model, train_ds, val_ds, test_ds, weights_dict):
     # callbacks to implement early stopping and saving the model
     es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=10)

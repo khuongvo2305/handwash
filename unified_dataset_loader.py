@@ -411,6 +411,12 @@ def load_dataset(config, dataset_name, model_type):
         return loader.load_3dcnn_dataset(dataset_name)
     elif model_type == 'tsn':
         return loader.load_tsn_dataset(dataset_name)
+    elif model_type == 'i3d':
+        # I3D uses same dataset as 3D CNN
+        return loader.load_3dcnn_dataset(dataset_name)
+    elif model_type == 'slowfast':
+        # SlowFast uses same dataset as 3D CNN (will be split in model)
+        return loader.load_3dcnn_dataset(dataset_name)
     else:
         raise ValueError(f"Unknown model type: {model_type}. "
-                        f"Must be 'frames', 'videos', 'merged', '3dcnn', or 'tsn'")
+                        f"Must be 'frames', 'videos', 'merged', '3dcnn', 'tsn', 'i3d', or 'slowfast'")

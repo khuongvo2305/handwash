@@ -57,6 +57,10 @@ training:
   num_segments: 3  # Number of segments for TSN
   frames_per_video: 30  # Approximate frames per video for TSN sampling
 
+  # SlowFast specific parameters
+  slowfast_alpha: 4  # Temporal stride ratio (Fast has alpha times more frames)
+  slowfast_beta: 8  # Channel ratio (Slow has beta times more channels)
+
   # Early stopping
   early_stopping_patience: 10
 

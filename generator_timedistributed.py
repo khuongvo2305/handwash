@@ -303,4 +303,4 @@ def load_image(path, image_size,
 
     img.set_shape((image_size[0], image_size[1], num_channels))
     imgs.append(img)
-  return tf.convert_to_tensor(imgs, dtype=tf.float32)
+  return tf.stack(imgs)  # More efficient than convert_to_tensor

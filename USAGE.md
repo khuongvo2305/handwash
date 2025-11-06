@@ -35,10 +35,14 @@ python train.py --dataset metc --model merged
 - `frames` - Single-frame CNN (MobileNetV2/InceptionV3/Xception)
 - `videos` - TimeDistributed CNN + GRU for video sequences
 - `merged` - Two-stream network (RGB + Optical Flow)
-- `3dcnn` - 3D CNN for spatiotemporal learning (NEW!)
-- `tsn` - Temporal Segment Network - efficient sparse sampling (NEW!)
+- `3dcnn` - 3D CNN for spatiotemporal learning
+- `tsn` - Temporal Segment Network - efficient sparse sampling
+- `i3d` - Inflated 3D with Inception modules (ADVANCED!)
+- `slowfast` - Dual-pathway SlowFast Networks (ADVANCED!)
 
-**📖 See [NEW_MODELS.md](NEW_MODELS.md) for detailed guide on 3D CNN and TSN models**
+**📖 Documentation:**
+- [NEW_MODELS.md](NEW_MODELS.md) - Guide for 3D CNN and TSN models
+- [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) - I3D, SlowFast, TFLite export, and ensemble methods
 
 ## Configuration
 
